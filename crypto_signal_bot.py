@@ -469,20 +469,35 @@ with c_btn:
     clicked = st.button("Analyze ▶", type="primary", use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  FIX 2 — COIN CHIP BUTTONS (compact, not spread full-width)
-#  Use 12-col max columns so chips stay tight together
+#  COIN CHIP BUTTONS — pure HTML flexbox (no st.columns = no forced spacing)
+#  Each chip is a Streamlit button inside a tight flex container via CSS inject
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Check if a chip was clicked via query params
+qp = st.query_params
+if "chip" in qp:
+    sym_inp = qp["chip"]
+    clicked = True
+
 for cat, coins in QUICK_PICKS.items():
-    H(f"<div style='font-size:.68rem;color:#474D57;font-weight:600;letter-spacing:.05em;text-transform:uppercase;margin:12px 0 6px'>{cat}</div>")
-    # Render coins in groups of 12 max; always exactly len(coins) columns but capped tightly
-    n = len(coins)
-    cols = st.columns(n)
-    for i, coin in enumerate(coins):
+    H(f"<div style='font-size:.68rem;color:#474D57;font-weight:600;letter-spacing:.05em;text-transform:uppercase;margin:12px 0 5px'>{cat}</div>")
+    # Build all chips as one flex row — pure HTML, no column spreading
+    chips_html = "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px'>"
+    for coin in coins:
         short = coin.replace("-USD", "")
-        with cols[i]:
-            if st.button(short, key=f"chip_{coin}", type="secondary"):
-                sym_inp = coin
-                clicked = True
+        chips_html += (
+            f"<a href='?chip={coin}' target='_self' "
+            f"style='display:inline-flex;align-items:center;justify-content:center;"
+            f"background:#1E2329;color:#848E9C;border:1px solid #2B3139;"
+            f"border-radius:4px;font-family:IBM Plex Mono,monospace;font-size:.76rem;"
+            f"font-weight:500;padding:5px 14px;text-decoration:none;white-space:nowrap;"
+            f"transition:all .15s;cursor:pointer' "
+            f"onmouseover=\"this.style.borderColor='#F0B90B';this.style.color='#F0B90B';this.style.background='#F0B90B10'\" "
+            f"onmouseout=\"this.style.borderColor='#2B3139';this.style.color='#848E9C';this.style.background='#1E2329'\">"
+            f"{short}</a>"
+        )
+    chips_html += "</div>"
+    H(chips_html)
 
 H("<div style='height:10px'></div>")
 H("<hr style='border:none;border-top:1px solid #2B3139;margin:4px 0 18px'>")
@@ -492,19 +507,21 @@ H("<hr style='border:none;border-top:1px solid #2B3139;margin:4px 0 18px'>")
 # ─────────────────────────────────────────────────────────────────────────────
 if clicked and sym_inp:
     sym_inp = sym_inp.strip()
+    # clear chip param so back/refresh doesn't re-trigger
+    if "chip" in st.query_params:
+        st.query_params.clear()
     with st.spinner(f"Fetching {sym_inp.upper()} market data..."):
         try:
             data = analyze(sym_inp)
             if data is None:
-                st.error("❌  Symbol empty hai — kuch likhein pehle.")
+                H("<div style='background:#F6465D12;border:1px solid #F6465D40;border-left:3px solid #F6465D;border-radius:6px;padding:11px 16px;color:#F6465D;font-family:IBM Plex Mono,monospace;font-size:.82rem;margin:8px 0'>❌ &nbsp; Symbol empty hai — kuch likhein pehle.</div>")
             else:
                 st.session_state.result = data
-                # FIX 1 — history dict always has all keys with safe defaults
                 st.session_state.history.insert(0, {
                     "pair":  data.get("pair",  data["key"]),
                     "sig":   data.get("stype", "hold"),
                     "live":  data.get("live",  0.0),
-                    "pct":   data.get("pct",   0.0),   # ← was missing = KeyError
+                    "pct":   data.get("pct",   0.0),
                     "tp":    data.get("tp",    0.0),
                     "sl":    data.get("sl",    0.0),
                     "time":  datetime.now().strftime("%H:%M:%S"),
@@ -513,10 +530,9 @@ if clicked and sym_inp:
                 st.session_state.skey += 1
                 st.rerun()
         except ValueError as ve:
-            # FIX 3 — user-friendly error, not redacted KeyError
-            st.error(f"❌  {ve}")
+            H(f"<div style='background:#F6465D12;border:1px solid #F6465D40;border-left:3px solid #F6465D;border-radius:6px;padding:11px 16px;color:#F6465D;font-family:IBM Plex Mono,monospace;font-size:.82rem;margin:8px 0'>❌ &nbsp; {ve}</div>")
         except Exception as ex:
-            st.error(f"❌  Unexpected error: {ex}")
+            H(f"<div style='background:#F6465D12;border:1px solid #F6465D40;border-left:3px solid #F6465D;border-radius:6px;padding:11px 16px;color:#F6465D;font-family:IBM Plex Mono,monospace;font-size:.82rem;margin:8px 0'>❌ &nbsp; Error: {ex}</div>")
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  RESULT PANEL
