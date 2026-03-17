@@ -140,11 +140,22 @@ def lcw_history(code: str, days: int = 90) -> pd.DataFrame:
     df = df.set_index("date").sort_index()
     df.rename(columns={"rate": "Close", "volume": "Volume", "cap": "Cap"}, inplace=True)
 
+    # Convert to numeric — some coins return None in history fields
+    df["Close"]  = pd.to_numeric(df["Close"],  errors="coerce")
+    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0)
+
+    # Forward-fill any None/NaN prices then drop leading NaNs
+    df["Close"] = df["Close"].ffill().bfill()
+    df.dropna(subset=["Close"], inplace=True)
+
+    if df.empty:
+        raise ValueError(f"'{code}' ka history data empty hai baad mein cleaning ke.")
+
     # Resample to daily — LCW history gives hourly points
     daily = df["Close"].resample("1D").ohlc()
     daily.columns = ["Open","High","Low","Close"]
     daily["Volume"] = df["Volume"].resample("1D").sum()
-    daily.dropna(inplace=True)
+    daily.dropna(subset=["Close"], inplace=True)
     return daily
 
 # ── ANALYSIS ───────────────────────────────────────────────────────────────────
@@ -172,18 +183,31 @@ def rsi_series(closes: np.ndarray) -> list:
         else: out.append(calc_rsi(pd.Series(closes[max(0,i-28):i+1])))
     return out
 
+def safe_float(val, default=0.0) -> float:
+    """Convert any value to float safely - None, empty string, NaN all return default."""
+    try:
+        if val is None: return default
+        f = float(val)
+        return default if (f != f) else f
+    except (TypeError, ValueError):
+        return default
+
 def analyze(raw: str) -> dict:
     code = raw.upper().strip().replace("-USD","").replace("USDT","").strip()
     if not code: return None
 
     # 1. Live price from LCW
     live_data = lcw_single(code)
-    live      = float(live_data.get("rate", 0))
-    delta24   = float(live_data.get("delta", {}).get("day", 0))   # fractional change
-    pct24     = (delta24 - 1) * 100                               # convert to %
-    vol24     = float(live_data.get("volume", 0))
-    cap       = float(live_data.get("cap", 0))
-    name_api  = live_data.get("name", code)
+    delta_raw = live_data.get("delta") or {}
+    live      = safe_float(live_data.get("rate"),    0.0)
+    delta24   = safe_float(delta_raw.get("day"),     1.0)
+    pct24     = (delta24 - 1) * 100
+    vol24     = safe_float(live_data.get("volume"),  0.0)
+    cap       = safe_float(live_data.get("cap"),     0.0)
+    name_api  = live_data.get("name") or code
+
+    if live <= 0:
+        raise ValueError(f"'{code}' ka live price nahi mila. Symbol check karein (e.g. BTC, PEPE, DOGE).")
 
     # 2. Historical OHLCV for indicators
     df = lcw_history(code, days=90)
