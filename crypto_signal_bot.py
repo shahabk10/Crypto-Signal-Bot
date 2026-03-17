@@ -95,43 +95,49 @@ PICKS = {
 }
 
 # ── LCW API FUNCTIONS ──────────────────────────────────────────────────────────
+def lcw_request(endpoint: str, payload: dict, retries: int = 3) -> dict:
+    """Central LCW API caller with retry + exponential backoff."""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                f"{LCW_BASE}{endpoint}",
+                headers=HEADERS,
+                json=payload,
+                timeout=25,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            last_err = f"API Error {resp.status_code}: {resp.text[:120]}"
+        except requests.exceptions.Timeout:
+            last_err = "Server ne response nahi diya (timeout). Thoda ruk ke dobara try karein."
+        except requests.exceptions.ConnectionError:
+            last_err = "Network connection issue. Internet check karein."
+        except Exception as e:
+            last_err = str(e)
+        if attempt < retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+    raise ValueError(last_err)
+
 def lcw_single(code: str) -> dict:
     """Get live price + 24h data for a coin."""
-    resp = requests.post(
-        f"{LCW_BASE}/coins/single",
-        headers=HEADERS,
-        json={"currency": "USD", "code": code.upper(), "meta": True},
-        timeout=10
-    )
-    if resp.status_code == 200:
-        return resp.json()
-    raise ValueError(f"API Error {resp.status_code}: {resp.text[:120]}")
+    return lcw_request("/coins/single",
+                       {"currency": "USD", "code": code.upper(), "meta": True})
 
 def lcw_history(code: str, days: int = 90) -> pd.DataFrame:
-    """
-    Get OHLCV history from LCW.
-    LCW /coins/single/history returns {history:[{date,rate,volume,cap},...]}
-    We resample to daily OHLCV using the rate field.
-    """
+    """Get OHLCV history from LCW — hourly data resampled to daily."""
     now_ms   = int(time.time() * 1000)
     start_ms = now_ms - days * 24 * 3600 * 1000
 
-    resp = requests.post(
-        f"{LCW_BASE}/coins/single/history",
-        headers=HEADERS,
-        json={
-            "currency": "USD",
-            "code":     code.upper(),
-            "start":    start_ms,
-            "end":      now_ms,
-            "meta":     False,
-        },
-        timeout=15
-    )
-    if resp.status_code != 200:
-        raise ValueError(f"History API Error {resp.status_code}: {resp.text[:120]}")
+    data_raw = lcw_request("/coins/single/history", {
+        "currency": "USD",
+        "code":     code.upper(),
+        "start":    start_ms,
+        "end":      now_ms,
+        "meta":     False,
+    })
 
-    data = resp.json().get("history", [])
+    data = data_raw.get("history", [])
     if not data:
         raise ValueError(f"No history data for {code}")
 
@@ -418,7 +424,7 @@ H("<div style='border-top:1px solid #2B3139;margin:4px 0 18px'></div>")
 if clicked and sym_inp:
     if "chip" in st.query_params:
         st.query_params.clear()
-    with st.spinner("LiveCoinWatch se data fetch ho raha hai..."):
+    with st.spinner(f"⏳ {sym_inp.upper().strip()} data fetch ho raha hai... (3 retries, ~25s timeout)"):
         try:
             data = analyze(sym_inp)
             if data:
