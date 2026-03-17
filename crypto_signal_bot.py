@@ -360,14 +360,24 @@ if st.session_state.error:
 # ── RESULT ─────────────────────────────────────────────────────────────────────
 if st.session_state.result:
     d = st.session_state.result
-    pu = d["pct"] >= 0
+
+    # Wipe cached result if it's from an old schema (missing new keys)
+    required_keys = {"cat","stype","live","pct","cp","tp","sl","rsi","sma","std",
+                     "rr","tp_pct","sl_pct","trend","high3m","low3m","df",
+                     "name","pair","icon","color","sig"}
+    if not required_keys.issubset(d.keys()):
+        st.session_state.result = None
+        st.session_state.history = []
+        st.rerun()
+
+    pu      = d.get("pct", 0.0) >= 0
     pct_col = "#0ECB81" if pu else "#F6465D"
-    pct_str = ("+" if pu else "") + f"{d['pct']:.2f}%  (24h)"
+    pct_str = ("+" if pu else "") + f"{d.get('pct',0.0):.2f}%  (24h)"
 
     sig_bg  = {"buy":"rgba(14,203,129,0.07)","sell":"rgba(246,70,93,0.07)","hold":"rgba(240,185,11,0.07)"}
     sig_bdr = {"buy":"#0ECB81","sell":"#F6465D","hold":"#F0B90B"}
     sig_clr = {"buy":"#0ECB81","sell":"#F6465D","hold":"#F0B90B"}
-    st_key  = d["stype"]
+    st_key  = d.get("stype","hold")
 
     # Price header
     H(f"""<div style="background:#161A1E;border:1px solid #2B3139;border-radius:8px;
@@ -403,10 +413,24 @@ if st.session_state.result:
       </div>
     </div>""")
 
-    # Stat cards — build all HTML as one string to avoid f-string nesting issues
-    rsi_c = "#F0B90B" if 30<=d["rsi"]<=70 else ("#0ECB81" if d["rsi"]<30 else "#F6465D")
-    rr_c  = "#0ECB81" if d["rr"]>=2 else ("#F0B90B" if d["rr"]>=1 else "#F6465D")
-    rsi_lbl = "Oversold" if d["rsi"]<30 else ("Overbought" if d["rsi"]>70 else "Neutral")
+    # Extract all values safely upfront
+    cp     = d.get("cp",     0.0)
+    tp     = d.get("tp",     0.0)
+    sl     = d.get("sl",     0.0)
+    rsi    = d.get("rsi",    50.0)
+    sma    = d.get("sma",    0.0)
+    std    = d.get("std",    0.0)
+    rr     = d.get("rr",     0.0)
+    tp_pct = d.get("tp_pct", 0.0)
+    sl_pct = d.get("sl_pct", 0.0)
+    trend  = d.get("trend",  "-")
+    high3m = d.get("high3m", 0.0)
+    low3m  = d.get("low3m",  0.0)
+    stype  = d.get("stype",  "hold")
+
+    rsi_c   = "#F0B90B" if 30<=rsi<=70 else ("#0ECB81" if rsi<30 else "#F6465D")
+    rr_c    = "#0ECB81" if rr>=2 else ("#F0B90B" if rr>=1 else "#F6465D")
+    rsi_lbl = "Oversold" if rsi<30 else ("Overbought" if rsi>70 else "Neutral")
 
     def stat_card(label, value, sub, color="#EAECEF"):
         return (
@@ -419,30 +443,31 @@ if st.session_state.result:
             '</div>'
         )
 
+    sl_pct_str = (("+" if sl_pct>=0 else "") + f"{sl_pct:.1f}") + "% from entry"
     cards_html = (
         '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
-        + stat_card("Entry Price", fmt(d["cp"]), "Last close")
-        + stat_card("Take Profit", fmt(d["tp"]), "+" + f"{abs(d['tp_pct']):.1f}% from entry", "#0ECB81")
-        + stat_card("Stop Loss",   fmt(d["sl"]), f"{d['sl_pct']:+.1f}% from entry", "#F6465D")
-        + stat_card("RSI (14)",    f"{d['rsi']:.1f}", rsi_lbl, rsi_c)
-        + stat_card("Risk/Reward", f"1 : {d['rr']:.2f}", d["trend"], rr_c)
-        + stat_card("3M High/Low", fmt(d["high3m"]), "Low " + fmt(d["low3m"]))
+        + stat_card("Entry Price", fmt(cp),    "Last close")
+        + stat_card("Take Profit", fmt(tp),    "+" + f"{abs(tp_pct):.1f}% from entry", "#0ECB81")
+        + stat_card("Stop Loss",   fmt(sl),    sl_pct_str, "#F6465D")
+        + stat_card("RSI (14)",    f"{rsi:.1f}", rsi_lbl, rsi_c)
+        + stat_card("Risk/Reward", f"1 : {rr:.2f}", trend, rr_c)
+        + stat_card("3M High/Low", fmt(high3m), "Low " + fmt(low3m))
         + '</div>'
     )
     H(cards_html)
 
     # Insight
-    if d["stype"] == "buy":
-        ins = (f"Price {fmt(d['cp'])} SMA-20 ({fmt(d['sma'])}) se upar hai. "
-               f"RSI {d['rsi']:.0f} — overbought nahi, bullish momentum strong. "
-               f"TP {fmt(d['tp'])} (+{abs(d['tp_pct']):.1f}%), SL {fmt(d['sl'])} rakhen.")
-    elif d["stype"] == "sell":
-        ins = (f"Price {fmt(d['cp'])} SMA-20 ({fmt(d['sma'])}) se neeche. "
-               f"RSI {d['rsi']:.0f} — bearish confirm. "
-               f"SL {fmt(d['sl'])} pe rakhen. TP: {fmt(d['tp'])}.")
+    if stype == "buy":
+        ins = ("Price " + fmt(cp) + " SMA-20 (" + fmt(sma) + ") se upar hai. "
+               "RSI " + f"{rsi:.0f}" + " - overbought nahi, bullish momentum strong. "
+               "TP " + fmt(tp) + " (+" + f"{abs(tp_pct):.1f}" + "%), SL " + fmt(sl) + " rakhen.")
+    elif stype == "sell":
+        ins = ("Price " + fmt(cp) + " SMA-20 (" + fmt(sma) + ") se neeche. "
+               "RSI " + f"{rsi:.0f}" + " - bearish confirm. "
+               "SL " + fmt(sl) + " pe rakhen. TP: " + fmt(tp) + ".")
     else:
-        ins = (f"RSI {d['rsi']:.0f} neutral (30-70). Price SMA ({fmt(d['sma'])}) ke paas. "
-               f"Clear direction nahi — confirmation ka wait karen.")
+        ins = ("RSI " + f"{rsi:.0f}" + " neutral (30-70). Price SMA (" + fmt(sma) + ") ke paas. "
+               "Clear direction nahi - confirmation ka wait karen.")
 
     H('<div style="background:#161A1E;border:1px solid #2B3139;border-left:3px solid #F0B90B;'
       'border-radius:6px;padding:12px 16px;font-size:.82rem;color:#848E9C;'
