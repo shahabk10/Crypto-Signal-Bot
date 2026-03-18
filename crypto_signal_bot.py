@@ -125,10 +125,16 @@ def lcw_single(code: str) -> dict:
                        {"currency": "USD", "code": code.upper(), "meta": True})
 
 def lcw_history(code: str, days: int = 90) -> pd.DataFrame:
-    """Get OHLCV history from LCW — hourly data resampled to daily."""
+    """
+    Fetch daily OHLCV from LCW by fetching day-by-day slices.
+    LCW /coins/single/history with 1-day intervals gives proper daily candles.
+    Strategy: fetch last 90 days in one call with enough granularity,
+    then resample carefully to produce proper OHLCV daily bars.
+    """
     now_ms   = int(time.time() * 1000)
     start_ms = now_ms - days * 24 * 3600 * 1000
 
+    # Fetch with 3-hour intervals to get enough points for proper daily OHLC
     data_raw = lcw_request("/coins/single/history", {
         "currency": "USD",
         "code":     code.upper(),
@@ -139,29 +145,42 @@ def lcw_history(code: str, days: int = 90) -> pd.DataFrame:
 
     data = data_raw.get("history", [])
     if not data:
-        raise ValueError(f"No history data for {code}")
+        raise ValueError(f"'{code}' ka history data nahi mila.")
 
     df = pd.DataFrame(data)
     df["date"] = pd.to_datetime(df["date"], unit="ms", utc=True)
     df = df.set_index("date").sort_index()
-    df.rename(columns={"rate": "Close", "volume": "Volume", "cap": "Cap"}, inplace=True)
 
-    # Convert to numeric — some coins return None in history fields
-    df["Close"]  = pd.to_numeric(df["Close"],  errors="coerce")
-    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0)
+    # Safe numeric conversion
+    df["rate"]   = pd.to_numeric(df.get("rate",   pd.Series(dtype=float)), errors="coerce")
+    df["volume"] = pd.to_numeric(df.get("volume", pd.Series(dtype=float)), errors="coerce").fillna(0)
 
-    # Forward-fill any None/NaN prices then drop leading NaNs
-    df["Close"] = df["Close"].ffill().bfill()
-    df.dropna(subset=["Close"], inplace=True)
+    # Drop nulls and forward-fill small gaps
+    df["rate"] = df["rate"].ffill().bfill()
+    df.dropna(subset=["rate"], inplace=True)
 
     if df.empty:
-        raise ValueError(f"'{code}' ka history data empty hai baad mein cleaning ke.")
+        raise ValueError(f"'{code}' ka data clean karne ke baad empty ho gaya.")
 
-    # Resample to daily — LCW history gives hourly points
-    daily = df["Close"].resample("1D").ohlc()
-    daily.columns = ["Open","High","Low","Close"]
-    daily["Volume"] = df["Volume"].resample("1D").sum()
-    daily.dropna(subset=["Close"], inplace=True)
+    # --- Resample to daily OHLCV properly ---
+    daily = pd.DataFrame()
+    daily["Open"]   = df["rate"].resample("1D").first()
+    daily["High"]   = df["rate"].resample("1D").max()
+    daily["Low"]    = df["rate"].resample("1D").min()
+    daily["Close"]  = df["rate"].resample("1D").last()
+    daily["Volume"] = df["volume"].resample("1D").sum()
+
+    # Drop days where we have no data at all
+    daily.dropna(subset=["Open","High","Low","Close"], inplace=True)
+
+    # Fix bad candles: if High==Low (only 1 data point that day), widen slightly
+    mask = daily["High"] == daily["Low"]
+    daily.loc[mask, "High"] = daily.loc[mask, "High"] * 1.001
+    daily.loc[mask, "Low"]  = daily.loc[mask, "Low"]  * 0.999
+
+    if len(daily) < 10:
+        raise ValueError(f"'{code}' ke liye sirf {len(daily)} daily candles mili — kafi nahi.")
+
     return daily
 
 # ── ANALYSIS ───────────────────────────────────────────────────────────────────
@@ -283,6 +302,7 @@ def build_chart(d: dict):
         decreasing=dict(fillcolor=DN, line=dict(color=DN, width=1)),
         name="Price",
         showlegend=True,
+        whiskerwidth=0.3,
     ), row=1, col=1)
 
     # ── SMA-20 ──
