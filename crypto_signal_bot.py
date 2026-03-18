@@ -46,6 +46,18 @@ div[data-testid="stButton"] button[kind="primary"]:hover{background:#FFD35A!impo
 div[data-testid="stSpinner"]>div{border-top-color:#F0B90B!important;}
 div[data-testid="stAlert"]{display:none!important;}
 
+/* TF selector buttons */
+.tf-btn {
+    display:inline-flex;align-items:center;justify-content:center;
+    background:#1E2329;color:#848E9C;
+    border:1px solid #2B3139;border-radius:4px;
+    font-family:IBM Plex Mono,monospace;font-size:.78rem;font-weight:600;
+    padding:5px 16px;cursor:pointer;text-decoration:none;
+    transition:all .15s;letter-spacing:.04em;
+}
+.tf-btn:hover{border-color:#F0B90B;color:#F0B90B;background:rgba(240,185,11,0.06);}
+.tf-btn.active{background:#F0B90B18;border-color:#F0B90B;color:#F0B90B;}
+
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-track{background:#161A1E;}
 ::-webkit-scrollbar-thumb{background:#2B3139;border-radius:3px;}
@@ -124,17 +136,22 @@ def lcw_single(code: str) -> dict:
     return lcw_request("/coins/single",
                        {"currency": "USD", "code": code.upper(), "meta": True})
 
-def lcw_history(code: str, days: int = 90) -> pd.DataFrame:
-    """
-    Fetch daily OHLCV from LCW by fetching day-by-day slices.
-    LCW /coins/single/history with 1-day intervals gives proper daily candles.
-    Strategy: fetch last 90 days in one call with enough granularity,
-    then resample carefully to produce proper OHLCV daily bars.
-    """
-    now_ms   = int(time.time() * 1000)
-    start_ms = now_ms - days * 24 * 3600 * 1000
+# Timeframe config: label -> (resample_rule, lookback_hours, min_candles)
+TF_CONFIG = {
+    "1D":  ("1D",   90*24,  30),   # 90 days, daily candles
+    "4H":  ("4H",   30*24,  20),   # 30 days, 4-hour candles
+    "1H":  ("1H",   7*24,   20),   # 7 days,  1-hour candles
+    "15m": ("15min",2*24,   20),   # 2 days,  15-min candles
+}
 
-    # Fetch with 3-hour intervals to get enough points for proper daily OHLC
+def lcw_history(code: str, timeframe: str = "1D") -> pd.DataFrame:
+    """Fetch OHLCV from LCW and resample to requested timeframe."""
+    tf = TF_CONFIG.get(timeframe, TF_CONFIG["1D"])
+    resample_rule, lookback_hours, min_candles = tf
+
+    now_ms   = int(time.time() * 1000)
+    start_ms = now_ms - lookback_hours * 3600 * 1000
+
     data_raw = lcw_request("/coins/single/history", {
         "currency": "USD",
         "code":     code.upper(),
@@ -154,34 +171,30 @@ def lcw_history(code: str, days: int = 90) -> pd.DataFrame:
     # Safe numeric conversion
     df["rate"]   = pd.to_numeric(df.get("rate",   pd.Series(dtype=float)), errors="coerce")
     df["volume"] = pd.to_numeric(df.get("volume", pd.Series(dtype=float)), errors="coerce").fillna(0)
-
-    # Drop nulls and forward-fill small gaps
-    df["rate"] = df["rate"].ffill().bfill()
+    df["rate"]   = df["rate"].ffill().bfill()
     df.dropna(subset=["rate"], inplace=True)
 
     if df.empty:
         raise ValueError(f"'{code}' ka data clean karne ke baad empty ho gaya.")
 
-    # --- Resample to daily OHLCV properly ---
-    daily = pd.DataFrame()
-    daily["Open"]   = df["rate"].resample("1D").first()
-    daily["High"]   = df["rate"].resample("1D").max()
-    daily["Low"]    = df["rate"].resample("1D").min()
-    daily["Close"]  = df["rate"].resample("1D").last()
-    daily["Volume"] = df["volume"].resample("1D").sum()
+    # Resample to requested OHLCV timeframe
+    out = pd.DataFrame()
+    out["Open"]   = df["rate"].resample(resample_rule).first()
+    out["High"]   = df["rate"].resample(resample_rule).max()
+    out["Low"]    = df["rate"].resample(resample_rule).min()
+    out["Close"]  = df["rate"].resample(resample_rule).last()
+    out["Volume"] = df["volume"].resample(resample_rule).sum()
+    out.dropna(subset=["Open","High","Low","Close"], inplace=True)
 
-    # Drop days where we have no data at all
-    daily.dropna(subset=["Open","High","Low","Close"], inplace=True)
+    # Fix degenerate candles (single price point in a period)
+    mask = out["High"] == out["Low"]
+    out.loc[mask, "High"] = out.loc[mask, "High"] * 1.001
+    out.loc[mask, "Low"]  = out.loc[mask, "Low"]  * 0.999
 
-    # Fix bad candles: if High==Low (only 1 data point that day), widen slightly
-    mask = daily["High"] == daily["Low"]
-    daily.loc[mask, "High"] = daily.loc[mask, "High"] * 1.001
-    daily.loc[mask, "Low"]  = daily.loc[mask, "Low"]  * 0.999
+    if len(out) < min_candles:
+        raise ValueError(f"'{code}' {timeframe} mein sirf {len(out)} candles mili — kafi nahi.")
 
-    if len(daily) < 10:
-        raise ValueError(f"'{code}' ke liye sirf {len(daily)} daily candles mili — kafi nahi.")
-
-    return daily
+    return out
 
 # ── ANALYSIS ───────────────────────────────────────────────────────────────────
 def fmt(p):
@@ -217,7 +230,7 @@ def safe_float(val, default=0.0) -> float:
     except (TypeError, ValueError):
         return default
 
-def analyze(raw: str) -> dict:
+def analyze(raw: str, timeframe: str = "1D") -> dict:
     code = raw.upper().strip().replace("-USD","").replace("USDT","").strip()
     if not code: return None
 
@@ -235,7 +248,7 @@ def analyze(raw: str) -> dict:
         raise ValueError(f"'{code}' ka live price nahi mila. Symbol check karein (e.g. BTC, PEPE, DOGE).")
 
     # 2. Historical OHLCV for indicators
-    df = lcw_history(code, days=90)
+    df = lcw_history(code, timeframe=timeframe)
     if len(df) < 22:
         raise ValueError(f"{code} ke liye sufficient history nahi mili.")
 
@@ -276,7 +289,7 @@ def analyze(raw: str) -> dict:
         "sig": sig, "stype": stype, "rr": rr,
         "tp_pct": tp_pct, "sl_pct": sl_pct,
         "trend": trend, "high3m": high3m, "low3m": low3m,
-        "df": df,
+        "df": df, "timeframe": timeframe,
     }
 
 # ── CHART ──────────────────────────────────────────────────────────────────────
@@ -417,7 +430,7 @@ def build_chart(d: dict):
     return fig
 
 # ── SESSION ────────────────────────────────────────────────────────────────────
-for k,v in [("history",[]),("result",None),("skey",0),("error","")]:
+for k,v in [("history",[]),("result",None),("skey",0),("error",""),("tf","1D")]:
     if k not in st.session_state: st.session_state[k] = v
 
 def H(html): st.markdown(html, unsafe_allow_html=True)
@@ -519,9 +532,9 @@ H("<div style='border-top:1px solid #2B3139;margin:4px 0 18px'></div>")
 if clicked and sym_inp:
     if "chip" in st.query_params:
         st.query_params.clear()
-    with st.spinner(f"⏳ {sym_inp.upper().strip()} data fetch ho raha hai... (3 retries, ~25s timeout)"):
+    with st.spinner(f"⏳ {sym_inp.upper().strip()} [{st.session_state.tf}] data fetch ho raha hai..."):
         try:
-            data = analyze(sym_inp)
+            data = analyze(sym_inp, timeframe=st.session_state.tf)
             if data:
                 st.session_state.result  = data
                 st.session_state.error   = ""
@@ -686,6 +699,30 @@ if st.session_state.result:
       'border-left:3px solid #F0B90B;border-radius:6px;padding:12px 16px;'
       'font-size:.82rem;color:#848E9C;line-height:1.65;margin-bottom:14px">'
       '&#128161; &nbsp;' + ins + '</div>')
+
+    # ── Timeframe Selector ──
+    cur_tf = st.session_state.get("tf", "1D")
+    tf_qp  = st.query_params.get("tf", "")
+    if tf_qp and tf_qp != cur_tf and tf_qp in ("1D","4H","1H","15m"):
+        st.session_state.tf = tf_qp
+        st.session_state.skey += 1
+        st.query_params.clear()
+        st.rerun()
+
+    tf_labels = [("1D","Daily"),("4H","4 Hour"),("1H","1 Hour"),("15m","15 Min")]
+    tf_row = (
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' 
+        '<span style="font-size:.7rem;color:#474D57;font-family:IBM Plex Mono,monospace;'
+        'text-transform:uppercase;letter-spacing:.06em;margin-right:8px">Timeframe</span>'
+    )
+    for tf_key, tf_name in tf_labels:
+        is_active = "active" if cur_tf == tf_key else ""
+        tf_row += (
+            '<a href="?tf=' + tf_key + '" target="_self" class="tf-btn ' + is_active + '">'
+            + tf_name + '</a>'
+        )
+    tf_row += '</div>'
+    H(tf_row)
 
     st.plotly_chart(
         build_chart(d),
