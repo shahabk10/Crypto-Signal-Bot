@@ -313,41 +313,63 @@ def build_chart(d: dict):
     BG   = "#0B0E11"; SBG = "#161A1E"; GR = "#1e2530"
     TICK = "#848E9C"; MUTED = "#474D57"
 
+    # Use last N candles based on timeframe for proper zoom
+    tf = d.get("timeframe", "1D")
+    show_candles = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
+    df = df.iloc[-show_candles:]
+
+    closes = df["Close"].tolist()
+    xs     = df.index.tolist()
+
+    # Dynamic y-axis range: zoom into price action (+/- 15% of range)
+    mn, mx = min(closes), max(closes)
+    pad    = (mx - mn) * 0.15
+    y_min  = mn - pad
+    y_max  = mx + pad
+
+    trend_up = closes[-1] >= closes[0]
+    line_clr = UP if trend_up else DN
+    fill_clr = "rgba(14,203,129,0.15)" if trend_up else "rgba(246,70,93,0.15)"
+
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True,
         vertical_spacing=0.02,
         row_heights=[0.60, 0.20, 0.20],
     )
 
-    closes = df["Close"].tolist()
-    xs     = df.index.tolist()
-
-    # ── Row 1: Filled Area (mountain chart) ──
-    # Gradient effect: green if last > first, red otherwise
-    trend_up  = closes[-1] >= closes[0]
-    line_clr  = UP if trend_up else DN
-    fill_clr  = "rgba(14,203,129,0.12)" if trend_up else "rgba(246,70,93,0.12)"
-
+    # ── Row 1: Mountain Area ──
     fig.add_trace(go.Scatter(
         x=xs, y=closes,
         mode="lines",
-        line=dict(color=line_clr, width=2, shape="spline", smoothing=0.6),
-        fill="tozeroy",
+        line=dict(color=line_clr, width=2.5, shape="spline", smoothing=0.5),
+        fill="tonexty",
         fillcolor=fill_clr,
         name="Price",
-        hovertemplate="<b>%{x|%d %b %Y}</b><br>Price: $%{y:,.4f}<extra></extra>",
+        hovertemplate="<b>%{x|%d %b %H:%M}</b><br>$%{y:,.6f}<extra></extra>",
     ), row=1, col=1)
+
+    # Invisible baseline for fill
+    fig.add_trace(go.Scatter(
+        x=xs, y=[y_min] * len(xs),
+        mode="lines", line=dict(width=0),
+        showlegend=False, hoverinfo="skip",
+        fill=None,
+    ), row=1, col=1)
+
+    # Reorder: baseline first, price second for proper fill
+    fig.data = (fig.data[1], fig.data[0]) + fig.data[2:]
 
     # ── SMA-20 ──
+    sma_vals = df["SMA20"].tolist()
     fig.add_trace(go.Scatter(
-        x=xs, y=df["SMA20"].tolist(),
+        x=xs, y=sma_vals,
         mode="lines",
-        line=dict(color="#F0B90B", width=1.5, dash="dot", shape="spline"),
+        line=dict(color="#F0B90B", width=1.5, dash="dot"),
         name="SMA-20",
-        hovertemplate="SMA-20: $%{y:,.4f}<extra></extra>",
+        hovertemplate="SMA: $%{y:,.6f}<extra></extra>",
     ), row=1, col=1)
 
-    # ── TP / Entry / SL horizontal lines ──
+    # ── TP / Entry / SL lines ──
     for yval, color, label in [
         (d["tp"], UP,        "TP  " + fmt(d["tp"])),
         (d["cp"], "#848E9C", "Entry  " + fmt(d["cp"])),
@@ -356,7 +378,7 @@ def build_chart(d: dict):
         fig.add_trace(go.Scatter(
             x=[xs[0], xs[-1]], y=[yval, yval],
             mode="lines",
-            line=dict(color=color, width=1, dash="dash"),
+            line=dict(color=color, width=1.2, dash="dash"),
             showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
         fig.add_annotation(
@@ -367,29 +389,27 @@ def build_chart(d: dict):
             xref="x", yref="y", xshift=8,
         )
 
-    # ── Row 2: Volume bars ──
+    # ── Row 2: Volume ──
     vol_colors = [UP if c >= o else DN
                   for c, o in zip(df["Close"], df["Open"])]
     fig.add_trace(go.Bar(
         x=xs, y=df["Volume"].tolist(),
         marker_color=vol_colors, marker_line_width=0,
-        name="Volume", opacity=0.55, showlegend=False,
+        opacity=0.6, showlegend=False,
         hovertemplate="Vol: %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    # ── Row 3: RSI filled area ──
+    # ── Row 3: RSI ──
     rsi_vals = rsi_series(df["Close"].values)
     fig.add_trace(go.Scatter(
         x=xs, y=rsi_vals,
         mode="lines",
-        line=dict(color="#C850C0", width=1.5, shape="spline"),
-        fill="tozeroy",
-        fillcolor="rgba(200,80,192,0.08)",
-        name="RSI", showlegend=False,
+        line=dict(color="#C850C0", width=2, shape="spline"),
+        fill="tozeroy", fillcolor="rgba(200,80,192,0.08)",
+        showlegend=False,
         hovertemplate="RSI: %{y:.1f}<extra></extra>",
     ), row=3, col=1)
 
-    # RSI level lines
     for lvl, clr in [(70, DN), (50, MUTED), (30, UP)]:
         fig.add_trace(go.Scatter(
             x=[xs[0], xs[-1]], y=[lvl, lvl],
@@ -403,28 +423,22 @@ def build_chart(d: dict):
         gridcolor=GR, linecolor=GR, zerolinecolor=GR,
         showgrid=True, zeroline=False,
         tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
-        tickcolor=MUTED,
     )
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor=BG,
-        plot_bgcolor=SBG,
+        paper_bgcolor=BG, plot_bgcolor=SBG,
         font=dict(color=TICK, family="IBM Plex Mono", size=10),
         xaxis_rangeslider_visible=False,
         showlegend=True,
-        legend=dict(
-            orientation="h", y=1.04, x=0,
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(size=10, color=TICK),
-        ),
+        legend=dict(orientation="h", y=1.04, x=0,
+                    bgcolor="rgba(0,0,0,0)",
+                    font=dict(size=10, color=TICK)),
         margin=dict(l=10, r=100, t=20, b=10),
         height=560,
         hovermode="x unified",
-        hoverlabel=dict(
-            bgcolor="#1E2329", bordercolor="#2B3139",
-            font=dict(color="#EAECEF", family="IBM Plex Mono"),
-        ),
+        hoverlabel=dict(bgcolor="#1E2329", bordercolor="#2B3139",
+                        font=dict(color="#EAECEF", family="IBM Plex Mono")),
     )
 
     for i in range(1, 4):
@@ -433,7 +447,9 @@ def build_chart(d: dict):
             f"yaxis{i if i>1 else ''}": axis_style,
         })
 
-    fig.update_yaxes(tickprefix="$", tickformat=",.4f",
+    # Key fix: force y-axis range to zoom into actual price movement
+    fig.update_yaxes(range=[y_min, y_max],
+                     tickprefix="$", tickformat=",.4f",
                      exponentformat="none", row=1, col=1)
     fig.update_yaxes(range=[0, 100], row=3, col=1)
     fig.update_yaxes(tickformat=".2s", row=2, col=1)
