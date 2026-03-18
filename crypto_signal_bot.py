@@ -317,85 +317,88 @@ def build_chart(d: dict):
         rows=3, cols=1, shared_xaxes=True,
         vertical_spacing=0.02,
         row_heights=[0.60, 0.20, 0.20],
-        subplot_titles=("", "", ""),
     )
 
-    # ── Row 1: Candlestick ──
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df["Open"], high=df["High"],
-        low=df["Low"],   close=df["Close"],
-        increasing=dict(fillcolor=UP, line=dict(color=UP, width=1)),
-        decreasing=dict(fillcolor=DN, line=dict(color=DN, width=1)),
+    closes = df["Close"].tolist()
+    xs     = df.index.tolist()
+
+    # ── Row 1: Filled Area (mountain chart) ──
+    # Gradient effect: green if last > first, red otherwise
+    trend_up  = closes[-1] >= closes[0]
+    line_clr  = UP if trend_up else DN
+    fill_clr  = "rgba(14,203,129,0.12)" if trend_up else "rgba(246,70,93,0.12)"
+
+    fig.add_trace(go.Scatter(
+        x=xs, y=closes,
+        mode="lines",
+        line=dict(color=line_clr, width=2, shape="spline", smoothing=0.6),
+        fill="tozeroy",
+        fillcolor=fill_clr,
         name="Price",
-        showlegend=True,
-        whiskerwidth=0.3,
+        hovertemplate="<b>%{x|%d %b %Y}</b><br>Price: $%{y:,.4f}<extra></extra>",
     ), row=1, col=1)
 
     # ── SMA-20 ──
     fig.add_trace(go.Scatter(
-        x=df.index, y=df["SMA20"],
+        x=xs, y=df["SMA20"].tolist(),
         mode="lines",
-        line=dict(color="#F0B90B", width=1.5, dash="dot"),
+        line=dict(color="#F0B90B", width=1.5, dash="dot", shape="spline"),
         name="SMA-20",
+        hovertemplate="SMA-20: $%{y:,.4f}<extra></extra>",
     ), row=1, col=1)
 
-    # ── TP / Entry / SL as Scatter lines (safer than add_hline) ──
-    n = len(df)
+    # ── TP / Entry / SL horizontal lines ──
     for yval, color, label in [
-        (d["tp"], UP,        "TP " + fmt(d["tp"])),
-        (d["cp"], "#848E9C", "Entry " + fmt(d["cp"])),
-        (d["sl"], DN,        "SL " + fmt(d["sl"])),
+        (d["tp"], UP,        "TP  " + fmt(d["tp"])),
+        (d["cp"], "#848E9C", "Entry  " + fmt(d["cp"])),
+        (d["sl"], DN,        "SL  " + fmt(d["sl"])),
     ]:
         fig.add_trace(go.Scatter(
-            x=[df.index[0], df.index[-1]],
-            y=[yval, yval],
+            x=[xs[0], xs[-1]], y=[yval, yval],
             mode="lines",
             line=dict(color=color, width=1, dash="dash"),
-            name=label,
-            showlegend=False,
-            hoverinfo="skip",
+            showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
-        # annotation as scatter marker at right edge
         fig.add_annotation(
-            x=df.index[-1], y=yval,
-            text=label,
+            x=xs[-1], y=yval, text=label,
             showarrow=False,
             xanchor="left", yanchor="middle",
             font=dict(size=10, color=color, family="IBM Plex Mono"),
-            xref="x1", yref="y1",
-            xshift=6,
+            xref="x", yref="y", xshift=8,
         )
 
     # ── Row 2: Volume bars ──
     vol_colors = [UP if c >= o else DN
                   for c, o in zip(df["Close"], df["Open"])]
     fig.add_trace(go.Bar(
-        x=df.index, y=df["Volume"],
+        x=xs, y=df["Volume"].tolist(),
         marker_color=vol_colors, marker_line_width=0,
-        name="Volume", opacity=0.6, showlegend=False,
+        name="Volume", opacity=0.55, showlegend=False,
+        hovertemplate="Vol: %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    # ── Row 3: RSI line only (NO fill to avoid bleed) ──
+    # ── Row 3: RSI filled area ──
     rsi_vals = rsi_series(df["Close"].values)
     fig.add_trace(go.Scatter(
-        x=df.index, y=rsi_vals,
+        x=xs, y=rsi_vals,
         mode="lines",
-        line=dict(color="#C850C0", width=1.5),
-        name="RSI",
-        showlegend=False,
+        line=dict(color="#C850C0", width=1.5, shape="spline"),
+        fill="tozeroy",
+        fillcolor="rgba(200,80,192,0.08)",
+        name="RSI", showlegend=False,
+        hovertemplate="RSI: %{y:.1f}<extra></extra>",
     ), row=3, col=1)
 
-    # RSI zone lines as scatter
-    for lvl, clr in [(70, DN), (30, UP), (50, MUTED)]:
+    # RSI level lines
+    for lvl, clr in [(70, DN), (50, MUTED), (30, UP)]:
         fig.add_trace(go.Scatter(
-            x=[df.index[0], df.index[-1]], y=[lvl, lvl],
+            x=[xs[0], xs[-1]], y=[lvl, lvl],
             mode="lines",
-            line=dict(color=clr, width=0.6, dash="dot"),
+            line=dict(color=clr, width=0.7, dash="dot"),
             showlegend=False, hoverinfo="skip",
         ), row=3, col=1)
 
-    # ── Axis style applied to all subplots ──
+    # ── Layout ──
     axis_style = dict(
         gridcolor=GR, linecolor=GR, zerolinecolor=GR,
         showgrid=True, zeroline=False,
@@ -404,7 +407,7 @@ def build_chart(d: dict):
     )
 
     fig.update_layout(
-        template="plotly_dark",          # force dark base
+        template="plotly_dark",
         paper_bgcolor=BG,
         plot_bgcolor=SBG,
         font=dict(color=TICK, family="IBM Plex Mono", size=10),
@@ -415,7 +418,7 @@ def build_chart(d: dict):
             bgcolor="rgba(0,0,0,0)",
             font=dict(size=10, color=TICK),
         ),
-        margin=dict(l=10, r=90, t=20, b=10),
+        margin=dict(l=10, r=100, t=20, b=10),
         height=560,
         hovermode="x unified",
         hoverlabel=dict(
@@ -424,21 +427,15 @@ def build_chart(d: dict):
         ),
     )
 
-    # Apply axis style to all x and y axes
     for i in range(1, 4):
         fig.update_layout(**{
             f"xaxis{i if i>1 else ''}": axis_style,
             f"yaxis{i if i>1 else ''}": axis_style,
         })
 
-    # Price axis: dollar prefix, no exponent
-    fig.update_yaxes(
-        tickprefix="$", tickformat=",.2f",
-        exponentformat="none", row=1, col=1,
-    )
-    # RSI axis: fixed 0-100
+    fig.update_yaxes(tickprefix="$", tickformat=",.4f",
+                     exponentformat="none", row=1, col=1)
     fig.update_yaxes(range=[0, 100], row=3, col=1)
-    # Volume axis: compact
     fig.update_yaxes(tickformat=".2s", row=2, col=1)
 
     return fig
