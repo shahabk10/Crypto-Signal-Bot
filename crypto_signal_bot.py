@@ -46,17 +46,31 @@ div[data-testid="stButton"] button[kind="primary"]:hover{background:#FFD35A!impo
 div[data-testid="stSpinner"]>div{border-top-color:#F0B90B!important;}
 div[data-testid="stAlert"]{display:none!important;}
 
-/* TF selector buttons */
-.tf-btn {
-    display:inline-flex;align-items:center;justify-content:center;
-    background:#1E2329;color:#848E9C;
-    border:1px solid #2B3139;border-radius:4px;
-    font-family:IBM Plex Mono,monospace;font-size:.78rem;font-weight:600;
-    padding:5px 16px;cursor:pointer;text-decoration:none;
-    transition:all .15s;letter-spacing:.04em;
+/* TF selector buttons — Streamlit st.button override */
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button {
+    background:#1E2329!important;
+    color:#848E9C!important;
+    border:1px solid #2B3139!important;
+    border-radius:4px!important;
+    font-family:IBM Plex Mono,monospace!important;
+    font-size:.78rem!important;
+    font-weight:600!important;
+    height:32px!important;
+    letter-spacing:.04em!important;
+    padding:0 8px!important;
 }
-.tf-btn:hover{border-color:#F0B90B;color:#F0B90B;background:rgba(240,185,11,0.06);}
-.tf-btn.active{background:#F0B90B18;border-color:#F0B90B;color:#F0B90B;}
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:hover {
+    border-color:#F0B90B!important;
+    color:#F0B90B!important;
+    background:rgba(240,185,11,0.06)!important;
+}
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:disabled {
+    background:rgba(240,185,11,0.12)!important;
+    border-color:#F0B90B!important;
+    color:#F0B90B!important;
+    opacity:1!important;
+    cursor:default!important;
+}
 
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-track{background:#161A1E;}
@@ -702,27 +716,41 @@ if st.session_state.result:
 
     # ── Timeframe Selector ──
     cur_tf = st.session_state.get("tf", "1D")
-    tf_qp  = st.query_params.get("tf", "")
-    if tf_qp and tf_qp != cur_tf and tf_qp in ("1D","4H","1H","15m"):
-        st.session_state.tf = tf_qp
-        st.session_state.skey += 1
-        st.query_params.clear()
-        st.rerun()
+    cur_code = d.get("code", "")
 
-    tf_labels = [("1D","Daily"),("4H","4 Hour"),("1H","1 Hour"),("15m","15 Min")]
-    tf_row = (
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' 
-        '<span style="font-size:.7rem;color:#474D57;font-family:IBM Plex Mono,monospace;'
-        'text-transform:uppercase;letter-spacing:.06em;margin-right:8px">Timeframe</span>'
-    )
-    for tf_key, tf_name in tf_labels:
-        is_active = "active" if cur_tf == tf_key else ""
-        tf_row += (
-            '<a href="?tf=' + tf_key + '" target="_self" class="tf-btn ' + is_active + '">'
-            + tf_name + '</a>'
-        )
-    tf_row += '</div>'
-    H(tf_row)
+    H('<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">'
+      '<span style="font-size:.7rem;color:#474D57;font-family:IBM Plex Mono,monospace;'
+      'text-transform:uppercase;letter-spacing:.06em;margin-right:8px">Timeframe</span>'
+      '</div>')
+
+    tf_labels = [("1D","Daily"), ("4H","4 Hour"), ("1H","1 Hour"), ("15m","15 Min")]
+    tf_cols = st.columns(len(tf_labels))
+    for i, (tf_key, tf_name) in enumerate(tf_labels):
+        with tf_cols[i]:
+            is_active = cur_tf == tf_key
+            btn_style = (
+                "background:#F0B90B18;border:1px solid #F0B90B;color:#F0B90B;"
+                if is_active else
+                "background:#1E2329;border:1px solid #2B3139;color:#848E9C;"
+            )
+            if st.button(
+                tf_name,
+                key=f"tf_btn_{tf_key}",
+                use_container_width=True,
+                disabled=is_active,
+            ):
+                st.session_state.tf = tf_key
+                # Re-fetch data with new timeframe
+                with st.spinner(f"⏳ {cur_code} [{tf_key}] chart load ho raha hai..."):
+                    try:
+                        new_data = analyze(cur_code, timeframe=tf_key)
+                        if new_data:
+                            st.session_state.result = new_data
+                            st.session_state.error  = ""
+                            st.rerun()
+                    except Exception as ex:
+                        st.session_state.error = str(ex)
+                        st.rerun()
 
     st.plotly_chart(
         build_chart(d),
