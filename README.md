@@ -11,13 +11,14 @@
 ---
 
 ## 🚀 Live Demo
-👉 **[Click here to open the app](YOUR_STREAMLIT_URL_HERE)**
+👉 **[Click here to open the app]([YOUR_STREAMLIT_URL_HERE](https://crypto-signal-bot-by-shahab.streamlit.app/))**
 
 ---
 
 ## 📸 Preview
 
-![App Screenshot](screenshot.png)
+![App Screenshot](<img width="1600" height="510" alt="image" src="https://github.com/user-attachments/assets/18430bc1-0793-4a28-a1be-66bac9ed0172" />
+)
 
 ---
 
