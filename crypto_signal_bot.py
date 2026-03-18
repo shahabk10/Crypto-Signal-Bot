@@ -262,63 +262,138 @@ def analyze(raw: str) -> dict:
 
 # ── CHART ──────────────────────────────────────────────────────────────────────
 def build_chart(d: dict):
-    df = d["df"].iloc[-60:]
-    UP="#0ECB81"; DN="#F6465D"; BG="#0B0E11"; SBG="#161A1E"; GR="#2B3139"
+    df   = d["df"].iloc[-60:].copy()
+    UP   = "#0ECB81"; DN = "#F6465D"
+    BG   = "#0B0E11"; SBG = "#161A1E"; GR = "#1e2530"
+    TICK = "#848E9C"; MUTED = "#474D57"
 
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        vertical_spacing=0.015, row_heights=[0.62,0.19,0.19])
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        vertical_spacing=0.02,
+        row_heights=[0.60, 0.20, 0.20],
+        subplot_titles=("", "", ""),
+    )
 
+    # ── Row 1: Candlestick ──
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df["Open"], high=df["High"],
-        low=df["Low"], close=df["Close"],
-        increasing_fillcolor=UP, increasing_line_color=UP,
-        decreasing_fillcolor=DN, decreasing_line_color=DN,
-        name="Price", line_width=1), row=1, col=1)
+        x=df.index,
+        open=df["Open"], high=df["High"],
+        low=df["Low"],   close=df["Close"],
+        increasing=dict(fillcolor=UP, line=dict(color=UP, width=1)),
+        decreasing=dict(fillcolor=DN, line=dict(color=DN, width=1)),
+        name="Price",
+        showlegend=True,
+    ), row=1, col=1)
 
+    # ── SMA-20 ──
     fig.add_trace(go.Scatter(
         x=df.index, y=df["SMA20"],
+        mode="lines",
         line=dict(color="#F0B90B", width=1.5, dash="dot"),
-        name="SMA-20"), row=1, col=1)
+        name="SMA-20",
+    ), row=1, col=1)
 
-    for yv, c, lb in [
-        (d["tp"], UP,        "TP  " + fmt(d["tp"])),
-        (d["sl"], DN,        "SL  " + fmt(d["sl"])),
-        (d["cp"], "#848E9C", "Entry  " + fmt(d["cp"])),
+    # ── TP / Entry / SL as Scatter lines (safer than add_hline) ──
+    n = len(df)
+    for yval, color, label in [
+        (d["tp"], UP,        "TP " + fmt(d["tp"])),
+        (d["cp"], "#848E9C", "Entry " + fmt(d["cp"])),
+        (d["sl"], DN,        "SL " + fmt(d["sl"])),
     ]:
-        fig.add_hline(y=yv, line_dash="dash", line_color=c, line_width=1,
-                      annotation_text=lb, annotation_font_color=c,
-                      annotation_font_size=10, row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[df.index[0], df.index[-1]],
+            y=[yval, yval],
+            mode="lines",
+            line=dict(color=color, width=1, dash="dash"),
+            name=label,
+            showlegend=False,
+            hoverinfo="skip",
+        ), row=1, col=1)
+        # annotation as scatter marker at right edge
+        fig.add_annotation(
+            x=df.index[-1], y=yval,
+            text=label,
+            showarrow=False,
+            xanchor="left", yanchor="middle",
+            font=dict(size=10, color=color, family="IBM Plex Mono"),
+            xref="x1", yref="y1",
+            xshift=6,
+        )
 
-    vol_c = [UP if c >= o else DN for c,o in zip(df["Close"], df["Open"])]
-    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], marker_color=vol_c,
-        marker_line_width=0, name="Volume", opacity=0.55), row=2, col=1)
+    # ── Row 2: Volume bars ──
+    vol_colors = [UP if c >= o else DN
+                  for c, o in zip(df["Close"], df["Open"])]
+    fig.add_trace(go.Bar(
+        x=df.index, y=df["Volume"],
+        marker_color=vol_colors, marker_line_width=0,
+        name="Volume", opacity=0.6, showlegend=False,
+    ), row=2, col=1)
 
+    # ── Row 3: RSI line only (NO fill to avoid bleed) ──
+    rsi_vals = rsi_series(df["Close"].values)
     fig.add_trace(go.Scatter(
-        x=df.index, y=rsi_series(df["Close"].values),
+        x=df.index, y=rsi_vals,
+        mode="lines",
         line=dict(color="#C850C0", width=1.5),
-        fill="tozeroy", fillcolor="rgba(200,80,192,0.06)",
-        name="RSI"), row=3, col=1)
+        name="RSI",
+        showlegend=False,
+    ), row=3, col=1)
 
-    fig.add_hrect(y0=30, y1=70, row=3, col=1,
-                  fillcolor="rgba(255,255,255,0.03)", line_width=0)
-    for lv, c in [(30, UP), (70, DN)]:
-        fig.add_hline(y=lv, line_color=c, line_width=0.8,
-                      line_dash="dot", row=3, col=1)
+    # RSI zone lines as scatter
+    for lvl, clr in [(70, DN), (30, UP), (50, MUTED)]:
+        fig.add_trace(go.Scatter(
+            x=[df.index[0], df.index[-1]], y=[lvl, lvl],
+            mode="lines",
+            line=dict(color=clr, width=0.6, dash="dot"),
+            showlegend=False, hoverinfo="skip",
+        ), row=3, col=1)
 
-    ax = dict(gridcolor=GR, linecolor=GR, zerolinecolor=GR,
-              tickfont=dict(size=9, color="#474D57"))
+    # ── Axis style applied to all subplots ──
+    axis_style = dict(
+        gridcolor=GR, linecolor=GR, zerolinecolor=GR,
+        showgrid=True, zeroline=False,
+        tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
+        tickcolor=MUTED,
+    )
+
     fig.update_layout(
-        paper_bgcolor=BG, plot_bgcolor=SBG,
-        font=dict(color="#848E9C", family="IBM Plex Mono", size=10),
+        template="plotly_dark",          # force dark base
+        paper_bgcolor=BG,
+        plot_bgcolor=SBG,
+        font=dict(color=TICK, family="IBM Plex Mono", size=10),
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", y=1.03, x=0, bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=10, color="#848E9C")),
-        margin=dict(l=0, r=72, t=8, b=0), height=550,
+        showlegend=True,
+        legend=dict(
+            orientation="h", y=1.04, x=0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=10, color=TICK),
+        ),
+        margin=dict(l=10, r=90, t=20, b=10),
+        height=560,
         hovermode="x unified",
-        hoverlabel=dict(bgcolor="#1E2329", bordercolor="#2B3139",
-                        font=dict(color="#EAECEF", family="IBM Plex Mono")))
-    fig.update_xaxes(**ax); fig.update_yaxes(**ax)
-    fig.update_yaxes(tickprefix="$", row=1, col=1)
+        hoverlabel=dict(
+            bgcolor="#1E2329", bordercolor="#2B3139",
+            font=dict(color="#EAECEF", family="IBM Plex Mono"),
+        ),
+    )
+
+    # Apply axis style to all x and y axes
+    for i in range(1, 4):
+        fig.update_layout(**{
+            f"xaxis{i if i>1 else ''}": axis_style,
+            f"yaxis{i if i>1 else ''}": axis_style,
+        })
+
+    # Price axis: dollar prefix, no exponent
+    fig.update_yaxes(
+        tickprefix="$", tickformat=",.2f",
+        exponentformat="none", row=1, col=1,
+    )
+    # RSI axis: fixed 0-100
+    fig.update_yaxes(range=[0, 100], row=3, col=1)
+    # Volume axis: compact
+    fig.update_yaxes(tickformat=".2s", row=2, col=1)
+
     return fig
 
 # ── SESSION ────────────────────────────────────────────────────────────────────
@@ -592,7 +667,16 @@ if st.session_state.result:
       'font-size:.82rem;color:#848E9C;line-height:1.65;margin-bottom:14px">'
       '&#128161; &nbsp;' + ins + '</div>')
 
-    st.plotly_chart(build_chart(d), use_container_width=True)
+    st.plotly_chart(
+        build_chart(d),
+        use_container_width=True,
+        config={
+            "displayModeBar": True,
+            "modeBarButtonsToRemove": ["lasso2d","select2d","autoScale2d"],
+            "displaylogo": False,
+        },
+        theme=None,
+    )
 
 # ── HISTORY TABLE ──────────────────────────────────────────────────────────────
 if st.session_state.history:
