@@ -308,26 +308,40 @@ def analyze(raw: str, timeframe: str = "1D") -> dict:
 
 # ── CHART ──────────────────────────────────────────────────────────────────────
 def build_chart(d: dict):
-    tf      = d.get("timeframe", "1D")
-    show_n  = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
-    df      = d["df"].iloc[-show_n:].copy()
-    xs      = df.index.tolist()
-    UP      = "#0ECB81";  DN    = "#F6465D"
-    BG      = "#0B0E11";  SBG   = "#161A1E"
-    GR      = "#2B3139";  MUTED = "#474D57"
+    tf     = d.get("timeframe", "1D")
+    show_n = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
+    df     = d["df"].iloc[-show_n:].copy()
+    xs     = df.index.tolist()
 
-    # Tight y-range based on candle highs/lows
+    # ── Binance exact colors ──
+    UP    = "#26a69a"   # Binance green
+    DN    = "#ef5350"   # Binance red
+    BG    = "#131722"   # Binance chart bg
+    SBG   = "#131722"
+    GRID  = "#1c2030"
+    MUTED = "#5d6d7e"
+    GOLD  = "#f0b90b"
+
+    # Tight y-range from candle data
     mn   = float(df["Low"].min())
     mx   = float(df["High"].max())
     rng  = mx - mn if mx != mn else mn * 0.01
-    y_lo = mn - rng * 0.06
-    y_hi = mx + rng * 0.06
+    y_lo = mn - rng * 0.04
+    y_hi = mx + rng * 0.10  # extra space for annotations on right
 
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        row_heights=[0.62, 0.19, 0.19],
-                        vertical_spacing=0.02)
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        row_heights=[0.65, 0.17, 0.18],
+        vertical_spacing=0.0,
+        specs=[[{"secondary_y": False}],
+               [{"secondary_y": False}],
+               [{"secondary_y": False}]],
+    )
 
-    # ── Candlestick ──
+    # ────────────────────────────────────────
+    # ROW 1 — Candlestick
+    # ────────────────────────────────────────
     fig.add_trace(go.Candlestick(
         x=xs,
         open=df["Open"].values,
@@ -337,94 +351,171 @@ def build_chart(d: dict):
         increasing=dict(fillcolor=UP, line=dict(color=UP, width=1)),
         decreasing=dict(fillcolor=DN, line=dict(color=DN, width=1)),
         name="Price",
-        showlegend=True,
+        showlegend=False,
+        whiskerwidth=1,
     ), row=1, col=1)
 
-    # ── SMA-20 ──
+    # SMA-20
     fig.add_trace(go.Scatter(
-        x=xs, y=df["SMA20"].values,
+        x=xs,
+        y=df["SMA20"].values,
         mode="lines",
-        line=dict(color="#F0B90B", width=1.5, dash="dot"),
-        name="SMA-20",
-        hovertemplate="SMA $%{y:,.4f}<extra></extra>",
+        line=dict(color=GOLD, width=1.2, dash="dot"),
+        name="MA20",
+        hoverinfo="skip",
     ), row=1, col=1)
 
-    # ── TP / Entry / SL ──
+    # TP line
+    fig.add_trace(go.Scatter(
+        x=[xs[0], xs[-1]], y=[d["tp"], d["tp"]],
+        mode="lines",
+        line=dict(color=UP, width=1, dash="dash"),
+        showlegend=False, hoverinfo="skip",
+    ), row=1, col=1)
+
+    # Entry line
+    fig.add_trace(go.Scatter(
+        x=[xs[0], xs[-1]], y=[d["cp"], d["cp"]],
+        mode="lines",
+        line=dict(color="#848E9C", width=1, dash="dot"),
+        showlegend=False, hoverinfo="skip",
+    ), row=1, col=1)
+
+    # SL line
+    fig.add_trace(go.Scatter(
+        x=[xs[0], xs[-1]], y=[d["sl"], d["sl"]],
+        mode="lines",
+        line=dict(color=DN, width=1, dash="dash"),
+        showlegend=False, hoverinfo="skip",
+    ), row=1, col=1)
+
+    # Annotations on right side
     for yv, col, lbl in [
         (d["tp"], UP,        "TP " + fmt(d["tp"])),
         (d["cp"], "#848E9C", "Entry " + fmt(d["cp"])),
         (d["sl"], DN,        "SL " + fmt(d["sl"])),
     ]:
-        fig.add_trace(go.Scatter(
-            x=[xs[0], xs[-1]], y=[yv, yv],
-            mode="lines",
-            line=dict(color=col, width=1.2, dash="dash"),
-            showlegend=False, hoverinfo="skip",
-        ), row=1, col=1)
         fig.add_annotation(
-            x=xs[-1], y=yv, text=lbl,
-            showarrow=False, xanchor="left", yanchor="middle",
+            x=1, y=yv, xref="paper", yref="y",
+            text=lbl, showarrow=False,
+            xanchor="left", yanchor="middle",
             font=dict(color=col, size=10, family="IBM Plex Mono"),
-            xref="x", yref="y", xshift=6,
+            xshift=4,
         )
 
-    # ── Volume ──
-    vcol = [UP if c >= o else DN
+    # ────────────────────────────────────────
+    # ROW 2 — Volume
+    # ────────────────────────────────────────
+    vcol = [UP if float(c) >= float(o) else DN
             for c, o in zip(df["Close"].values, df["Open"].values)]
     fig.add_trace(go.Bar(
-        x=xs, y=df["Volume"].values,
-        marker_color=vcol, marker_line_width=0,
-        opacity=0.6, showlegend=False,
-        hovertemplate="Vol %{y:,.0f}<extra></extra>",
+        x=xs,
+        y=df["Volume"].values,
+        marker_color=vcol,
+        marker_line_width=0,
+        opacity=0.7,
+        showlegend=False,
+        name="Volume",
+        hovertemplate="Vol: %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    # ── RSI ──
+    # ────────────────────────────────────────
+    # ROW 3 — RSI
+    # ────────────────────────────────────────
     rv = rsi_series(df["Close"].values)
     fig.add_trace(go.Scatter(
-        x=xs, y=rv, mode="lines",
-        line=dict(color="#C850C0", width=1.5),
-        fill="tozeroy", fillcolor="rgba(200,80,192,0.1)",
+        x=xs, y=rv,
+        mode="lines",
+        line=dict(color="#7b68ee", width=1.5),
         showlegend=False,
-        hovertemplate="RSI %{y:.1f}<extra></extra>",
+        name="RSI",
+        hovertemplate="RSI: %{y:.1f}<extra></extra>",
     ), row=3, col=1)
+
+    # RSI overbought/oversold zones
+    fig.add_hrect(y0=70, y1=100, row=3, col=1,
+                  fillcolor="rgba(239,83,80,0.07)", line_width=0)
+    fig.add_hrect(y0=0, y1=30, row=3, col=1,
+                  fillcolor="rgba(38,166,154,0.07)", line_width=0)
+
     for lv, lc in [(70, DN), (50, MUTED), (30, UP)]:
         fig.add_trace(go.Scatter(
             x=[xs[0], xs[-1]], y=[lv, lv], mode="lines",
-            line=dict(color=lc, width=0.7, dash="dot"),
+            line=dict(color=lc, width=0.6, dash="dot"),
             showlegend=False, hoverinfo="skip",
         ), row=3, col=1)
 
-    # ── Layout ──
-    ax = dict(gridcolor=GR, linecolor=GR, zerolinecolor=GR,
-              tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
-              showgrid=True, zeroline=False)
+    # ────────────────────────────────────────
+    # LAYOUT — Binance dark
+    # ────────────────────────────────────────
+    ax_common = dict(
+        showgrid=True,
+        gridcolor=GRID,
+        gridwidth=1,
+        zeroline=False,
+        linecolor=GRID,
+        tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
+        showspikes=True,
+        spikecolor=MUTED,
+        spikethickness=1,
+        spikedash="dot",
+    )
 
     fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor=BG, plot_bgcolor=SBG,
+        paper_bgcolor=BG,
+        plot_bgcolor=SBG,
         font=dict(color=MUTED, family="IBM Plex Mono", size=10),
         xaxis_rangeslider_visible=False,
         showlegend=True,
-        legend=dict(orientation="h", y=1.05, x=0,
-                    bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=10, color=MUTED)),
-        margin=dict(l=10, r=110, t=10, b=10),
-        height=560,
+        legend=dict(
+            orientation="h", y=1.02, x=0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=10, color=MUTED),
+        ),
+        margin=dict(l=0, r=120, t=8, b=0),
+        height=580,
         hovermode="x unified",
-        hoverlabel=dict(bgcolor="#1E2329", bordercolor=GR,
-                        font=dict(color="#EAECEF", family="IBM Plex Mono")),
+        hoverlabel=dict(
+            bgcolor="#1e2433",
+            bordercolor=GRID,
+            font=dict(color="#d1d4dc", family="IBM Plex Mono", size=11),
+        ),
+        dragmode="pan",
     )
 
-    for i in ["", "2", "3"]:
-        fig.update_layout(**{f"xaxis{i}": ax, f"yaxis{i}": ax})
+    # Apply axis styles
+    fig.update_xaxes(**ax_common)
+    fig.update_yaxes(**ax_common)
 
-    # Tight zoom on candle range
-    fig.update_yaxes(range=[y_lo, y_hi],
-                     tickprefix="$", exponentformat="none",
-                     row=1, col=1)
-    fig.update_yaxes(range=[0, 100], row=3, col=1)
+    # Price axis — tight zoom
+    fig.update_yaxes(
+        range=[y_lo, y_hi],
+        tickprefix="$",
+        tickformat=",.2f",
+        exponentformat="none",
+        row=1, col=1,
+    )
+
+    # Volume axis
+    fig.update_yaxes(
+        tickformat=".2s",
+        row=2, col=1,
+    )
+
+    # RSI axis — fixed 0-100
+    fig.update_yaxes(
+        range=[0, 100],
+        tickvals=[30, 50, 70],
+        row=3, col=1,
+    )
+
+    # Hide x-axis tick labels on rows 1 and 2
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=2, col=1)
+    fig.update_xaxes(showticklabels=True, row=3, col=1)
 
     return fig
+
 
 
 
