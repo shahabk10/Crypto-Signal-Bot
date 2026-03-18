@@ -308,48 +308,39 @@ def analyze(raw: str, timeframe: str = "1D") -> dict:
 
 # ── CHART ──────────────────────────────────────────────────────────────────────
 def build_chart(d: dict):
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
+    tf      = d.get("timeframe", "1D")
+    show_n  = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
+    df      = d["df"].iloc[-show_n:].copy()
+    xs      = df.index.tolist()
+    UP      = "#0ECB81";  DN    = "#F6465D"
+    BG      = "#0B0E11";  SBG   = "#161A1E"
+    GR      = "#2B3139";  MUTED = "#474D57"
 
-    tf           = d.get("timeframe", "1D")
-    show_n       = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
-    df           = d["df"].iloc[-show_n:].copy()
-    closes       = df["Close"].values
-    xs           = df.index.tolist()
-    UP           = "#0ECB81"
-    DN           = "#F6465D"
-    BG           = "#0B0E11"
-    SBG          = "#161A1E"
-    GR           = "#2B3139"
-    MUTED        = "#474D57"
-
-    # Y range — ONLY the actual price range, tight zoom
-    mn    = float(min(closes))
-    mx    = float(max(closes))
-    rng   = mx - mn if mx != mn else mn * 0.01
-    y_lo  = mn - rng * 0.08
-    y_hi  = mx + rng * 0.08
-
-    up    = float(closes[-1]) >= float(closes[0])
-    lc    = UP if up else DN
-    fc    = "rgba(14,203,129,0.18)" if up else "rgba(246,70,93,0.18)"
+    # Tight y-range based on candle highs/lows
+    mn   = float(df["Low"].min())
+    mx   = float(df["High"].max())
+    rng  = mx - mn if mx != mn else mn * 0.01
+    y_lo = mn - rng * 0.06
+    y_hi = mx + rng * 0.06
 
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        row_heights=[0.60, 0.20, 0.20],
+                        row_heights=[0.62, 0.19, 0.19],
                         vertical_spacing=0.02)
 
-    # ── price area ──
-    fig.add_trace(go.Scatter(
-        x=xs, y=closes,
-        mode="lines",
-        line=dict(color=lc, width=2),
-        fill="tozeroy",
-        fillcolor=fc,
+    # ── Candlestick ──
+    fig.add_trace(go.Candlestick(
+        x=xs,
+        open=df["Open"].values,
+        high=df["High"].values,
+        low=df["Low"].values,
+        close=df["Close"].values,
+        increasing=dict(fillcolor=UP, line=dict(color=UP, width=1)),
+        decreasing=dict(fillcolor=DN, line=dict(color=DN, width=1)),
         name="Price",
-        hovertemplate="%{x|%d %b %H:%M} — $%{y:,.6f}<extra></extra>",
+        showlegend=True,
     ), row=1, col=1)
 
-    # ── SMA line ──
+    # ── SMA-20 ──
     fig.add_trace(go.Scatter(
         x=xs, y=df["SMA20"].values,
         mode="lines",
@@ -367,7 +358,7 @@ def build_chart(d: dict):
         fig.add_trace(go.Scatter(
             x=[xs[0], xs[-1]], y=[yv, yv],
             mode="lines",
-            line=dict(color=col, width=1, dash="dash"),
+            line=dict(color=col, width=1.2, dash="dash"),
             showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
         fig.add_annotation(
@@ -377,7 +368,7 @@ def build_chart(d: dict):
             xref="x", yref="y", xshift=6,
         )
 
-    # ── volume ──
+    # ── Volume ──
     vcol = [UP if c >= o else DN
             for c, o in zip(df["Close"].values, df["Open"].values)]
     fig.add_trace(go.Bar(
@@ -396,13 +387,14 @@ def build_chart(d: dict):
         showlegend=False,
         hovertemplate="RSI %{y:.1f}<extra></extra>",
     ), row=3, col=1)
-    for lv, lc2 in [(70, DN), (50, MUTED), (30, UP)]:
+    for lv, lc in [(70, DN), (50, MUTED), (30, UP)]:
         fig.add_trace(go.Scatter(
             x=[xs[0], xs[-1]], y=[lv, lv], mode="lines",
-            line=dict(color=lc2, width=0.7, dash="dot"),
+            line=dict(color=lc, width=0.7, dash="dot"),
             showlegend=False, hoverinfo="skip",
         ), row=3, col=1)
 
+    # ── Layout ──
     ax = dict(gridcolor=GR, linecolor=GR, zerolinecolor=GR,
               tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
               showgrid=True, zeroline=False)
@@ -426,13 +418,14 @@ def build_chart(d: dict):
     for i in ["", "2", "3"]:
         fig.update_layout(**{f"xaxis{i}": ax, f"yaxis{i}": ax})
 
-    # CRITICAL: tight zoom so movement is visible
+    # Tight zoom on candle range
     fig.update_yaxes(range=[y_lo, y_hi],
                      tickprefix="$", exponentformat="none",
                      row=1, col=1)
     fig.update_yaxes(range=[0, 100], row=3, col=1)
 
     return fig
+
 
 
 # ── SESSION ────────────────────────────────────────────────────────────────────
