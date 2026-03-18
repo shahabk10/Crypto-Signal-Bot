@@ -308,153 +308,132 @@ def analyze(raw: str, timeframe: str = "1D") -> dict:
 
 # ── CHART ──────────────────────────────────────────────────────────────────────
 def build_chart(d: dict):
-    df   = d["df"].iloc[-60:].copy()
-    UP   = "#0ECB81"; DN = "#F6465D"
-    BG   = "#0B0E11"; SBG = "#161A1E"; GR = "#1e2530"
-    TICK = "#848E9C"; MUTED = "#474D57"
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
-    # Use last N candles based on timeframe for proper zoom
-    tf = d.get("timeframe", "1D")
-    show_candles = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
-    df = df.iloc[-show_candles:]
+    tf           = d.get("timeframe", "1D")
+    show_n       = {"1D": 60, "4H": 60, "1H": 72, "15m": 96}.get(tf, 60)
+    df           = d["df"].iloc[-show_n:].copy()
+    closes       = df["Close"].values
+    xs           = df.index.tolist()
+    UP           = "#0ECB81"
+    DN           = "#F6465D"
+    BG           = "#0B0E11"
+    SBG          = "#161A1E"
+    GR           = "#2B3139"
+    MUTED        = "#474D57"
 
-    closes = df["Close"].tolist()
-    xs     = df.index.tolist()
+    # Y range — ONLY the actual price range, tight zoom
+    mn    = float(min(closes))
+    mx    = float(max(closes))
+    rng   = mx - mn if mx != mn else mn * 0.01
+    y_lo  = mn - rng * 0.08
+    y_hi  = mx + rng * 0.08
 
-    # Dynamic y-axis range: zoom into price action (+/- 15% of range)
-    mn, mx = min(closes), max(closes)
-    pad    = (mx - mn) * 0.15
-    y_min  = mn - pad
-    y_max  = mx + pad
+    up    = float(closes[-1]) >= float(closes[0])
+    lc    = UP if up else DN
+    fc    = "rgba(14,203,129,0.18)" if up else "rgba(246,70,93,0.18)"
 
-    trend_up = closes[-1] >= closes[0]
-    line_clr = UP if trend_up else DN
-    fill_clr = "rgba(14,203,129,0.15)" if trend_up else "rgba(246,70,93,0.15)"
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                        row_heights=[0.60, 0.20, 0.20],
+                        vertical_spacing=0.02)
 
-    fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True,
-        vertical_spacing=0.02,
-        row_heights=[0.60, 0.20, 0.20],
-    )
-
-    # ── Row 1: Mountain Area ──
+    # ── price area ──
     fig.add_trace(go.Scatter(
         x=xs, y=closes,
         mode="lines",
-        line=dict(color=line_clr, width=2.5, shape="spline", smoothing=0.5),
-        fill="tonexty",
-        fillcolor=fill_clr,
+        line=dict(color=lc, width=2),
+        fill="tozeroy",
+        fillcolor=fc,
         name="Price",
-        hovertemplate="<b>%{x|%d %b %H:%M}</b><br>$%{y:,.6f}<extra></extra>",
+        hovertemplate="%{x|%d %b %H:%M} — $%{y:,.6f}<extra></extra>",
     ), row=1, col=1)
 
-    # Invisible baseline for fill
+    # ── SMA line ──
     fig.add_trace(go.Scatter(
-        x=xs, y=[y_min] * len(xs),
-        mode="lines", line=dict(width=0),
-        showlegend=False, hoverinfo="skip",
-        fill=None,
-    ), row=1, col=1)
-
-    # Reorder: baseline first, price second for proper fill
-    fig.data = (fig.data[1], fig.data[0]) + fig.data[2:]
-
-    # ── SMA-20 ──
-    sma_vals = df["SMA20"].tolist()
-    fig.add_trace(go.Scatter(
-        x=xs, y=sma_vals,
+        x=xs, y=df["SMA20"].values,
         mode="lines",
         line=dict(color="#F0B90B", width=1.5, dash="dot"),
         name="SMA-20",
-        hovertemplate="SMA: $%{y:,.6f}<extra></extra>",
+        hovertemplate="SMA $%{y:,.4f}<extra></extra>",
     ), row=1, col=1)
 
-    # ── TP / Entry / SL lines ──
-    for yval, color, label in [
-        (d["tp"], UP,        "TP  " + fmt(d["tp"])),
-        (d["cp"], "#848E9C", "Entry  " + fmt(d["cp"])),
-        (d["sl"], DN,        "SL  " + fmt(d["sl"])),
+    # ── TP / Entry / SL ──
+    for yv, col, lbl in [
+        (d["tp"], UP,        "TP " + fmt(d["tp"])),
+        (d["cp"], "#848E9C", "Entry " + fmt(d["cp"])),
+        (d["sl"], DN,        "SL " + fmt(d["sl"])),
     ]:
         fig.add_trace(go.Scatter(
-            x=[xs[0], xs[-1]], y=[yval, yval],
+            x=[xs[0], xs[-1]], y=[yv, yv],
             mode="lines",
-            line=dict(color=color, width=1.2, dash="dash"),
+            line=dict(color=col, width=1, dash="dash"),
             showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
         fig.add_annotation(
-            x=xs[-1], y=yval, text=label,
-            showarrow=False,
-            xanchor="left", yanchor="middle",
-            font=dict(size=10, color=color, family="IBM Plex Mono"),
-            xref="x", yref="y", xshift=8,
+            x=xs[-1], y=yv, text=lbl,
+            showarrow=False, xanchor="left", yanchor="middle",
+            font=dict(color=col, size=10, family="IBM Plex Mono"),
+            xref="x", yref="y", xshift=6,
         )
 
-    # ── Row 2: Volume ──
-    vol_colors = [UP if c >= o else DN
-                  for c, o in zip(df["Close"], df["Open"])]
+    # ── volume ──
+    vcol = [UP if c >= o else DN
+            for c, o in zip(df["Close"].values, df["Open"].values)]
     fig.add_trace(go.Bar(
-        x=xs, y=df["Volume"].tolist(),
-        marker_color=vol_colors, marker_line_width=0,
+        x=xs, y=df["Volume"].values,
+        marker_color=vcol, marker_line_width=0,
         opacity=0.6, showlegend=False,
-        hovertemplate="Vol: %{y:,.0f}<extra></extra>",
+        hovertemplate="Vol %{y:,.0f}<extra></extra>",
     ), row=2, col=1)
 
-    # ── Row 3: RSI ──
-    rsi_vals = rsi_series(df["Close"].values)
+    # ── RSI ──
+    rv = rsi_series(df["Close"].values)
     fig.add_trace(go.Scatter(
-        x=xs, y=rsi_vals,
-        mode="lines",
-        line=dict(color="#C850C0", width=2, shape="spline"),
-        fill="tozeroy", fillcolor="rgba(200,80,192,0.08)",
+        x=xs, y=rv, mode="lines",
+        line=dict(color="#C850C0", width=1.5),
+        fill="tozeroy", fillcolor="rgba(200,80,192,0.1)",
         showlegend=False,
-        hovertemplate="RSI: %{y:.1f}<extra></extra>",
+        hovertemplate="RSI %{y:.1f}<extra></extra>",
     ), row=3, col=1)
-
-    for lvl, clr in [(70, DN), (50, MUTED), (30, UP)]:
+    for lv, lc2 in [(70, DN), (50, MUTED), (30, UP)]:
         fig.add_trace(go.Scatter(
-            x=[xs[0], xs[-1]], y=[lvl, lvl],
-            mode="lines",
-            line=dict(color=clr, width=0.7, dash="dot"),
+            x=[xs[0], xs[-1]], y=[lv, lv], mode="lines",
+            line=dict(color=lc2, width=0.7, dash="dot"),
             showlegend=False, hoverinfo="skip",
         ), row=3, col=1)
 
-    # ── Layout ──
-    axis_style = dict(
-        gridcolor=GR, linecolor=GR, zerolinecolor=GR,
-        showgrid=True, zeroline=False,
-        tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
-    )
+    ax = dict(gridcolor=GR, linecolor=GR, zerolinecolor=GR,
+              tickfont=dict(size=9, color=MUTED, family="IBM Plex Mono"),
+              showgrid=True, zeroline=False)
 
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor=BG, plot_bgcolor=SBG,
-        font=dict(color=TICK, family="IBM Plex Mono", size=10),
+        font=dict(color=MUTED, family="IBM Plex Mono", size=10),
         xaxis_rangeslider_visible=False,
         showlegend=True,
-        legend=dict(orientation="h", y=1.04, x=0,
+        legend=dict(orientation="h", y=1.05, x=0,
                     bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=10, color=TICK)),
-        margin=dict(l=10, r=100, t=20, b=10),
+                    font=dict(size=10, color=MUTED)),
+        margin=dict(l=10, r=110, t=10, b=10),
         height=560,
         hovermode="x unified",
-        hoverlabel=dict(bgcolor="#1E2329", bordercolor="#2B3139",
+        hoverlabel=dict(bgcolor="#1E2329", bordercolor=GR,
                         font=dict(color="#EAECEF", family="IBM Plex Mono")),
     )
 
-    for i in range(1, 4):
-        fig.update_layout(**{
-            f"xaxis{i if i>1 else ''}": axis_style,
-            f"yaxis{i if i>1 else ''}": axis_style,
-        })
+    for i in ["", "2", "3"]:
+        fig.update_layout(**{f"xaxis{i}": ax, f"yaxis{i}": ax})
 
-    # Key fix: force y-axis range to zoom into actual price movement
-    fig.update_yaxes(range=[y_min, y_max],
-                     tickprefix="$", tickformat=",.4f",
-                     exponentformat="none", row=1, col=1)
+    # CRITICAL: tight zoom so movement is visible
+    fig.update_yaxes(range=[y_lo, y_hi],
+                     tickprefix="$", exponentformat="none",
+                     row=1, col=1)
     fig.update_yaxes(range=[0, 100], row=3, col=1)
-    fig.update_yaxes(tickformat=".2s", row=2, col=1)
 
     return fig
+
 
 # ── SESSION ────────────────────────────────────────────────────────────────────
 for k,v in [("history",[]),("result",None),("skey",0),("error",""),("tf","1D")]:
