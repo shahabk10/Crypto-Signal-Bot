@@ -134,6 +134,6 @@ Crypto-Signal-Bot/
 ## ⭐ Support
 
 If you found this project useful, please consider giving it a **star** ⭐  
-It motivates me to build more cool projects
+It motivates me to build more 
 
 ---
